@@ -1,19 +1,20 @@
 import os
 import sqlite3
 import tkinter as tk
-from tkinter import filedialog, messagebox, Toplevel, ttk
 from datetime import datetime, timedelta
+from tkinter import filedialog, messagebox, Toplevel, ttk
 from PIL import Image, ImageTk
-from tkcalendar import DateEntry
-import openpyxl
-from openpyxl import Workbook
-
-# ttkbootstrap (أفضل فصلها عن tkinter)
 from ttkbootstrap import Style
 from ttkbootstrap.constants import *
 from ttkbootstrap.widgets import Button as ttkButton
-from ttkbootstrap.widgets import Entry, Combobox, Label
-
+from ttkbootstrap.widgets import Entry, Combobox
+import tkinter as tk
+from ttkbootstrap import Style
+from ttkbootstrap.widgets import Button, Entry, Combobox, Label
+from tkinter import ttk, filedialog
+from tkcalendar import DateEntry
+import openpyxl
+from openpyxl import Workbook
 
 USERNAME = "admin"
 PASSWORD = "admin"
