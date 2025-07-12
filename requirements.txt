@@ -1,0 +1,5 @@
+tk
+Pillow
+ttkbootstrap
+tkcalendar
+openpyxl
