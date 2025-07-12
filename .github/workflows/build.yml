@@ -33,4 +33,4 @@ jobs:
       with:
         name: factory-maintenance-app
         path: dist/FMT.exe
-Add GitHub Action to build EXE
+
