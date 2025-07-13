@@ -32,6 +32,8 @@ def show_login_window():
     tk.Label(login_win, text="Password:", font=("Segoe UI", 12)).pack(pady=(10, 5))
     pass_entry = tk.Entry(login_win, show="*", font=("Segoe UI", 12))
     pass_entry.pack()
+    tk.Label(login_win, text="MADE BY IBRAHIM Z.", font=("Segoe UI", 26)).pack(pady=(40, 5))
+
 
     def try_login():
         if user_entry.get() == USERNAME and pass_entry.get() == PASSWORD:
@@ -490,7 +492,7 @@ def open_orders_window():
         def save_new():
             n = entry_name.get().strip()
             d = text_desc.get("1.0", tk.END).strip()
-            if not n or not d:
+            if not n :
                 messagebox.showerror("Error", "Please fill both Name and Description.")
                 return
             c.execute("INSERT INTO orders (name, description, status) VALUES (?, ?, ?)", (n, d, "ongoing"))
@@ -692,7 +694,7 @@ def add_machine():
     interval = entry_interval.get().strip()
     image_path = image_path_var.get().strip()
 
-    if not all([machine_id, name, location, category_name, purchase, last, interval]):
+    if not all([machine_id, name, location, category_name,  last, interval]):
         messagebox.showerror("Missing Info", "Please fill all fields.")
         return
     try:
