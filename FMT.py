@@ -20,7 +20,7 @@ USERNAME = "admin"
 PASSWORD = "admin"
 
 def show_login_window():
-    login_win = tk.Toplevel()
+    login_win = tk.Toplevel(app)  # اربطها بالنافذة الرئيسية app
     login_win.title("Login")
     login_win.geometry("800x680")
     login_win.grab_set()  # منع التفاعل مع باقي النوافذ
@@ -38,20 +38,80 @@ def show_login_window():
     def try_login():
         if user_entry.get() == USERNAME and pass_entry.get() == PASSWORD:
             login_win.destroy()
-            # بعدها نفعّل الواجهة
-            app.deiconify()
+            app.deiconify()  # إظهار النافذة الرئيسية
         else:
             messagebox.showerror("Login Failed", "Invalid username or password.")
 
     tk.Button(login_win, text="Login", font=("Segoe UI", 12), command=try_login).pack(pady=15)
+
+    # Optional: close app if user closes login window without logging in
+    def on_close():
+        login_win.destroy()
+        app.destroy()  # يغلق التطبيق كله
+
+    login_win.protocol("WM_DELETE_WINDOW", on_close)
+
 
 
 
 
 
 # --------- إعداد قاعدة البيانات ----------
-conn = sqlite3.connect("factory_maintenance.db")
+
+
+CONFIG_FILE = "config.txt"
+
+def save_db_path(path):
+    with open(CONFIG_FILE, "w") as f:
+        f.write(path)
+
+def load_db_path():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            path = f.read().strip()
+            if os.path.exists(path):
+                return path
+    return None
+
+def ask_user_for_db():
+    choice = messagebox.askquestion(
+        "data base",
+        "click yes to choose an exsiting data base or no to create one"
+    )
+    if choice == 'yes':
+        path = filedialog.askopenfilename(
+            title="اختر قاعدة البيانات",
+            filetypes=[("SQLite Database", "*.db")]
+        )
+    else:
+        # هنا نحدد مسار ثابت للقاعدة الجديدة
+        path = os.path.join(os.getcwd(), "factory_maintenance_new.db")
+        # ننشئ القاعدة الجديدة مباشرةً
+        conn = sqlite3.connect(path)
+        conn.close()
+        messagebox.showinfo("قاعدة جديدة", f"new db was created\n{path}")
+
+    return path if path else None
+
+def init_db_path():
+    db_path = load_db_path()
+    if not db_path:
+        db_path = ask_user_for_db()
+        if not db_path:
+            messagebox.showerror("error", "you have to choose a db or create a new one")
+            exit()
+        save_db_path(db_path)
+    return db_path
+
+
+
+
+root = tk.Tk()
+root.withdraw()  # نخفي نافذة Tkinter مؤقتاً
+db_path = init_db_path()
+conn = sqlite3.connect(db_path)
 c = conn.cursor()
+
 
 c.execute('''
 CREATE TABLE IF NOT EXISTS categories (
@@ -331,10 +391,39 @@ def display_machines_by_category(category_id):
 
 # --------- دوال إضافة وتحديث وحذف ---------
 
+ORDER_CATEGORIES = [
+    "صيانة",
+    "قطع غيار",
+    "تشغيل",
+    "تحديث برمجي",
+    "فحص دوري",
+    "سلامة",
+    "كهرباء",
+    "ميكانيك",
+    "تعديل",
+    "أخرى"
+]
+
+
+
+
+
+ORDER_CATEGORIES = [
+    "Maintenance",
+    "Spare Parts",
+    "Operations",
+    "Software Update",
+    "Routine Inspection",
+    "Safety",
+    "Electrical",
+    "Mechanical",
+    "Modification",
+    "Other"
+]
 
 def open_orders_window():
     def reset_orders():
-        # 1. جلب الطلبات المنتهية
+        # 1. Fetch finished orders
         c.execute("SELECT id, name, description, status FROM orders WHERE status='finished'")
         finished_orders = c.fetchall()
 
@@ -342,22 +431,22 @@ def open_orders_window():
             messagebox.showinfo("Reset Orders", "No finished orders to export.")
             return
 
-        # 2. حفظ إلى Excel
-
+        # 2. Save to Excel
         wb = Workbook()
         ws = wb.active
         ws.title = "Finished Orders"
-        ws.append(["ID", "Name", "Description", "Status"])
+        ws.append(["ID", "Name", "Description", "Status"])  # header row
 
         for order in finished_orders:
-            ws.append(order)
+            # order is a tuple: (id, name, description, status)
+            ws.append(order)  # appends all columns, including description
 
-        # 3. حفظ الملف بإسم مميز حسب الوقت
+        # 3. Save file with timestamped name
         now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"finished_orders_{now_str}.xlsx"
         wb.save(filename)
 
-        # 4. حذف الطلبات المنتهية من القاعدة
+        # 4. Delete finished orders and related histories
         c.execute("DELETE FROM orders WHERE status='finished'")
         c.execute("DELETE FROM order_history WHERE order_id NOT IN (SELECT id FROM orders)")
         conn.commit()
@@ -373,7 +462,7 @@ def open_orders_window():
         order_values = tree.item(selected_item)["values"]
         order_id = order_values[0]
 
-        # جلب الاسم والوصف من جدول الطلبات
+        # Fetch name and description from orders table
         c.execute("SELECT name, description FROM orders WHERE id=?", (order_id,))
         order = c.fetchone()
         if not order:
@@ -382,11 +471,11 @@ def open_orders_window():
 
         name, description = order
 
-        # جلب السجل من جدول order_history
+        # Fetch order history records
         c.execute("SELECT action, timestamp FROM order_history WHERE order_id=? ORDER BY id", (order_id,))
         history = c.fetchall()
 
-        # نافذة جديدة لعرض التفاصيل
+        # Create a new window to show details
         detail_win = Toplevel(orders_win)
         detail_win.title(f"Order #{order_id} Details")
         detail_win.geometry("500x400")
@@ -399,8 +488,7 @@ def open_orders_window():
         desc_box.insert("1.0", description)
         desc_box.config(state="disabled")
 
-        ttk.Label(detail_win, text="Order History:", font=("Arial", 11, "underline")).pack(anchor="w", padx=10,
-                                                                                           pady=(10, 0))
+        ttk.Label(detail_win, text="Order History:", font=("Arial", 11, "underline")).pack(anchor="w", padx=10, pady=(10, 0))
 
         history_box = tk.Text(detail_win, height=10, wrap="word")
         history_box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -421,6 +509,20 @@ def open_orders_window():
     main_frame = ttk.Frame(orders_win, padding=10)
     main_frame.pack(fill=tk.BOTH, expand=True)
 
+    filter_frame = ttk.Frame(orders_win)
+    filter_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+
+    ttk.Label(filter_frame, text="Filter by Category:").pack(side=tk.LEFT)
+
+    filter_var = tk.StringVar()
+    combo_filter = ttk.Combobox(filter_frame, textvariable=filter_var, values=["All"] + ORDER_CATEGORIES, state="readonly")
+    combo_filter.set("All")
+    combo_filter.pack(side=tk.LEFT, padx=5)
+
+    def on_filter_change(event=None):
+        load_orders()
+
+    combo_filter.bind("<<ComboboxSelected>>", on_filter_change)
 
     columns = ("id", "name", "description", "status", "history")
 
@@ -439,7 +541,7 @@ def open_orders_window():
     tree.pack(fill=tk.BOTH, expand=True, pady=10)
     tree.bind("<Double-1>", on_order_double_click)
 
-    # تلوين الحالة
+    # Coloring status
     def tag_status(status):
         return "finished" if status == "finished" else "ongoing"
 
@@ -461,14 +563,16 @@ def open_orders_window():
         tree.column("description", width=300)
         tree.column("status", width=100, anchor=tk.CENTER)
 
-        # تحميل الطلبات مع آخر حدث من التاريخ
-        c.execute("SELECT id, name, description, status FROM orders ORDER BY id DESC")
+        selected_category = filter_var.get()
+
+        # Load orders with ongoing first, then finished
+        c.execute("SELECT id, name, description, status FROM orders ORDER BY CASE status WHEN 'ongoing' THEN 0 ELSE 1 END, id DESC")
         orders = c.fetchall()
 
         for order in orders:
             order_id, name, desc, status = order
 
-            # جلب آخر سجل من التاريخ
+            # Fetch last history record
             c.execute(
                 "SELECT action, timestamp FROM order_history WHERE order_id = ? ORDER BY id DESC LIMIT 1",
                 (order_id,))
@@ -478,30 +582,45 @@ def open_orders_window():
                 action, timestamp = hist
                 desc_with_history = f"{desc}\n\nLast: {action} @ {timestamp}"
             else:
+                action = ""
+                timestamp = ""
                 desc_with_history = desc
+
+            # Filter by category if not "All"
+            if selected_category != "All":
+                # Since category is stored in history action like "Order Created (Maintenance)"
+                if f"({selected_category})" not in action:
+                    continue
 
             tag = "green" if status == "finished" else "yellow" if status == "ongoing" else "gray"
 
             tree.insert("", tk.END, values=(order_id, name, desc_with_history, status.capitalize()), tags=(tag,))
 
-        tree.tag_configure("green", foreground="#198754")  # أخضر
-        tree.tag_configure("yellow", foreground="#d39e00")  # أصفر
-        tree.tag_configure("gray", foreground="#6c757d")  # رمادي
+        tree.tag_configure("green", foreground="#198754")
+        tree.tag_configure("yellow", foreground="#d39e00")
+        tree.tag_configure("gray", foreground="#6c757d")
+
+    load_orders()
+
 
     def add_order():
         def save_new():
             n = entry_name.get().strip()
             d = text_desc.get("1.0", tk.END).strip()
-            if not n :
-                messagebox.showerror("Error", "Please fill both Name and Description.")
+            cat = combo_category.get().strip()
+
+            if not n or not cat:
+                messagebox.showerror("Error", "Please fill all fields and choose a category.")
                 return
+
+            # حفظ فقط الاسم والوصف والحالة (بدون تخزين التصنيف)
             c.execute("INSERT INTO orders (name, description, status) VALUES (?, ?, ?)", (n, d, "ongoing"))
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             c.execute("SELECT last_insert_rowid()")
             order_id = c.fetchone()[0]
-            c.execute("INSERT INTO order_history (order_id, action, timestamp) VALUES (?, ?, ?)",
-                      (order_id, "Order Created", now))
 
+            c.execute("INSERT INTO order_history (order_id, action, timestamp) VALUES (?, ?, ?)",
+                      (order_id, f"Order Created ({cat})", now))
 
             conn.commit()
             load_orders()
@@ -509,6 +628,12 @@ def open_orders_window():
 
         popup = Toplevel(orders_win)
         popup.title("Add New Order")
+
+        ttk.Label(popup, text="Category:").pack(padx=10, pady=5, anchor="w")
+        combo_category = ttk.Combobox(popup, values=ORDER_CATEGORIES, state="readonly")
+        combo_category.set("اختر التصنيف")
+        combo_category.pack(padx=10, pady=5)
+
         ttk.Label(popup, text="Name:").pack(padx=10, pady=5, anchor="w")
         entry_name = ttk.Entry(popup, width=40)
         entry_name.pack(padx=10, pady=5)
@@ -659,14 +784,16 @@ def clear_category_form():
 def delete_category():
     global selected_category_id
     if selected_category_id is None:
-        messagebox.showerror("Error", "Please select a category first.")
+        messagebox.showerror("خطأ", "يرجى اختيار تصنيف أولاً.")
         return
-    confirm = messagebox.askyesno("Confirm Delete", "Are you sure to delete this category?")
+    confirm = messagebox.askyesno(title='WARINING',message="make sure that there is no machines in this category")
     if confirm:
         c.execute("DELETE FROM categories WHERE id=?", (selected_category_id,))
         conn.commit()
         selected_category_id = None
         display_category_cards()
+
+
         # حدث قائمة التصنيفات وأي مكان آخر
 
 def clear_category_form():
@@ -681,9 +808,6 @@ def refresh_categories():
 
 
 
-
-
-
 def add_machine():
     machine_id = entry_id.get().strip()
     name = entry_name.get().strip()
@@ -694,14 +818,29 @@ def add_machine():
     interval = entry_interval.get().strip()
     image_path = image_path_var.get().strip()
 
-    if not all([machine_id, name, location, category_name,  last, interval]):
+    if not all([machine_id, name, location, category_name, last, interval]):
         messagebox.showerror("Missing Info", "Please fill all fields.")
         return
+
+    # التحقق من أن الفاصل الزمني رقم
     try:
         interval = int(interval)
     except ValueError:
         messagebox.showerror("Invalid Input", "Interval must be a number.")
         return
+
+    # التحقق من أن تاريخ آخر صيانة ليس في المستقبل
+    try:
+        last_date = datetime.strptime(last, "%Y-%m-%d").date()
+        today = datetime.today().date()
+        if last_date > today:
+            messagebox.showerror("Invalid Date", "Last maintenance date cannot be in the future.")
+            return
+    except ValueError:
+        messagebox.showerror("Invalid Date", "Date format should be YYYY-MM-DD.")
+        return
+
+    # التأكد من أن التصنيف موجود
     c.execute("SELECT id FROM categories WHERE name = ?", (category_name,))
     result = c.fetchone()
     if not result:
@@ -709,6 +848,7 @@ def add_machine():
         return
     cat_id = result[0]
 
+    # إضافة الماكينة إلى القاعدة
     try:
         c.execute('''
         INSERT INTO machines (id, name, location, category_id, purchase_date, last_maintenance, maintenance_interval_days, image_path)
@@ -1046,12 +1186,19 @@ selected_machine_id = None
 
 def calculate_days_left(last_maintenance, interval_days):
     try:
-        last_date = datetime.strptime(last_maintenance, "%Y-%m-%d")
+        last_date = datetime.strptime(last_maintenance, "%Y-%m-%d").date()
+        today = datetime.today().date()
+
+        # تحقق إن التاريخ ليس في المستقبل
+        if last_date > today:
+            return "please choose a valid date"
+
         next_maintenance = last_date + timedelta(days=interval_days)
-        delta = next_maintenance - datetime.now()
+        delta = next_maintenance - today
         return max(delta.days, 0)
     except:
         return "N/A"
+
 
 def clear_form():
     entry_id.config(state=tk.NORMAL)
