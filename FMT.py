@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import tkinter as tk
@@ -56,8 +57,10 @@ def show_login_window():
 
 
 
-# --------- إعداد قاعدة البيانات ----------
-
+import os
+import sqlite3
+import tkinter as tk
+from tkinter import messagebox, filedialog
 
 CONFIG_FILE = "config.txt"
 
@@ -75,22 +78,19 @@ def load_db_path():
 
 def ask_user_for_db():
     choice = messagebox.askquestion(
-        "data base",
-        "click yes to choose an exsiting data base or no to create one"
+        "DATA BASE",
+        "CLICK YES TO CHOOOSE AN EXSITING DB AND NO TO MAKE A NEW ONE"
     )
     if choice == 'yes':
         path = filedialog.askopenfilename(
-            title="اختر قاعدة البيانات",
+            title="CHOOSE DB",
             filetypes=[("SQLite Database", "*.db")]
         )
     else:
-        # هنا نحدد مسار ثابت للقاعدة الجديدة
         path = os.path.join(os.getcwd(), "factory_maintenance_new.db")
-        # ننشئ القاعدة الجديدة مباشرةً
         conn = sqlite3.connect(path)
         conn.close()
-        messagebox.showinfo("قاعدة جديدة", f"new db was created\n{path}")
-
+        messagebox.showinfo("NEW DB", f"A NEW DB WHERE MADE IN THIS PATH:\n{path}")
     return path if path else None
 
 def init_db_path():
@@ -98,19 +98,26 @@ def init_db_path():
     if not db_path:
         db_path = ask_user_for_db()
         if not db_path:
-            messagebox.showerror("error", "you have to choose a db or create a new one")
+            messagebox.showerror("error", "you must choose or make a db")
             exit()
         save_db_path(db_path)
     return db_path
 
-
-
-
+# ----- تنفيذ الإنشاء -----
 root = tk.Tk()
-root.withdraw()  # نخفي نافذة Tkinter مؤقتاً
+root.withdraw()  # إخفاء نافذة التطبيق مؤقتاً
+
 db_path = init_db_path()
 conn = sqlite3.connect(db_path)
 c = conn.cursor()
+
+# --- إنشاء الجداول ---
+
+try:
+    c.execute("ALTER TABLE orders ADD COLUMN category_id INTEGER DEFAULT NULL")
+    conn.commit()
+except sqlite3.OperationalError:
+    pass
 
 
 c.execute('''
@@ -144,14 +151,21 @@ CREATE TABLE IF NOT EXISTS history (
     user TEXT DEFAULT 'Unknown'
 )
 ''')
+
+# جدول الطلبات مع كل الأعمدة الجديدة
 c.execute('''
 CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     description TEXT,
-    status TEXT DEFAULT 'ongoing'
+    status TEXT DEFAULT 'waiting',
+    category TEXT,
+    notes TEXT,
+    action_type TEXT
 )
 ''')
+
+# سجل تغييرات الطلبات
 c.execute('''
 CREATE TABLE IF NOT EXISTS order_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,13 +176,22 @@ CREATE TABLE IF NOT EXISTS order_history (
     FOREIGN KEY (order_id) REFERENCES orders(id)
 )
 ''')
-conn.commit()
 
+# معلومات إنهاء الطلب (المشرف والعمال)
+c.execute("""
+CREATE TABLE IF NOT EXISTS order_finish_info (
+    order_id INTEGER PRIMARY KEY,
+    leader TEXT,
+    workers TEXT
+)
+""")
+
+# تأكد أن عمود ratings موجود (للإصدار القديم من الجدول)
 try:
-    c.execute("ALTER TABLE orders ADD COLUMN status TEXT DEFAULT 'ongoing'")
-    conn.commit()
+    c.execute("ALTER TABLE order_finish_info ADD COLUMN ratings TEXT")
 except sqlite3.OperationalError:
-    pass  # العمود موجود فعلاً، نتجاهل الخطأ
+    pass
+
 
 conn.commit()
 
@@ -190,9 +213,20 @@ CREATE TABLE IF NOT EXISTS orders (
     status TEXT NOT NULL DEFAULT 'ongoing'
 )
 ''')
+c.execute("""
+    CREATE TABLE IF NOT EXISTS order_ratings (
+        order_id INTEGER PRIMARY KEY,
+        worker_ratings TEXT
+    )
+""")
+
+
 conn.commit()
 
 # --------- دوال مساعدة ---------
+
+
+
 
 
 
@@ -391,64 +425,218 @@ def display_machines_by_category(category_id):
 
 # --------- دوال إضافة وتحديث وحذف ---------
 
-ORDER_CATEGORIES = [
-    "صيانة",
-    "قطع غيار",
-    "تشغيل",
-    "تحديث برمجي",
-    "فحص دوري",
-    "سلامة",
-    "كهرباء",
-    "ميكانيك",
-    "تعديل",
-    "أخرى"
-]
-
 
 
 
 
 ORDER_CATEGORIES = [
-    "Maintenance",
-    "Spare Parts",
-    "Operations",
-    "Software Update",
-    "Routine Inspection",
-    "Safety",
-    "Electrical",
-    "Mechanical",
-    "Modification",
-    "Other"
+    "Maintenance", "Spare Parts", "Operation", "Software Update",
+    "Periodic Check", "Safety", "Electricity", "Mechanical", "Modification", "Other"
 ]
+
+ORDER_ACTION_TYPES = [
+    "Wash", "Replace", "Repair", "Inspect", "Calibrate", "Upgrade", "Other"
+]
+
+LEADERS = []
+WORKERS = []
+
+def load_people():
+    global LEADERS, WORKERS
+    try:
+        with open("leaders.txt", "r", encoding="utf-8") as f:
+            LEADERS = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        LEADERS = []
+
+    try:
+        with open("workers.txt", "r", encoding="utf-8") as f:
+            WORKERS = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        WORKERS = []
+
+# load once on program start
+load_people()
+
+CATEGORIES_FILE = "categories.txt"
+ACTION_TYPES_FILE = "action_types.txt"
+
+def load_static_list(file_path):
+    if not os.path.exists(file_path):
+        return []
+    with open(file_path, "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip()]
+
+def save_static_list(file_path, items):
+    with open(file_path, "w", encoding="utf-8") as f:
+        for item in items:
+            f.write(item + "\n")
+
+def add_to_list(entry_widget, listbox_widget, file_path):
+    new_item = entry_widget.get().strip()
+    if not new_item:
+        messagebox.showerror("Error", "Entry is empty.")
+        return
+    items = load_static_list(file_path)
+    if new_item in items:
+        messagebox.showerror("Error", "Item already exists.")
+        return
+    items.append(new_item)
+    save_static_list(file_path, items)
+    load_list_to_listbox(file_path, listbox_widget)
+    entry_widget.delete(0, tk.END)
+
+def delete_selected(listbox_widget, file_path):
+    selected = listbox_widget.curselection()
+    if not selected:
+        messagebox.showerror("Error", "No item selected.")
+        return
+    index = selected[0]
+    items = load_static_list(file_path)
+    del items[index]
+    save_static_list(file_path, items)
+    load_list_to_listbox(file_path, listbox_widget)
+
+def load_list_to_listbox(file_path, listbox_widget):
+    listbox_widget.delete(0, tk.END)
+    for item in load_static_list(file_path):
+        listbox_widget.insert(tk.END, item)
+
+# === Manage Categories window ===
+def manage_categories_window():
+    cat_win = tk.Toplevel()
+    cat_win.title("Manage Categories")
+    cat_win.geometry("400x400")
+    cat_win.configure(bg=style.lookup("TFrame", "background") or "white")
+
+    ttk.Label(cat_win, text="Add New Category:").pack(pady=(10, 2))
+    entry_cat = ttk.Entry(cat_win)
+    entry_cat.pack(pady=2)
+    ttk.Button(cat_win, text="Add Category", bootstyle="success",
+               command=lambda: add_to_list(entry_cat, listbox_cat, CATEGORIES_FILE)).pack(pady=5)
+
+    listbox_cat = tk.Listbox(cat_win, height=15)
+    listbox_cat.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+    ttk.Button(cat_win, text="Delete Selected Category", bootstyle="danger",
+               command=lambda: delete_selected(listbox_cat, CATEGORIES_FILE)).pack(pady=5)
+
+    load_list_to_listbox(CATEGORIES_FILE, listbox_cat)
+
+# === Manage Action Types window ===
+def manage_action_types_window():
+    act_win = tk.Toplevel()
+    act_win.title("Manage Action Types")
+    act_win.geometry("400x400")
+    act_win.configure(bg=style.lookup("TFrame", "background") or "white")
+
+    ttk.Label(act_win, text="Add New Action Type:").pack(pady=(10, 2))
+    entry_act = ttk.Entry(act_win)
+    entry_act.pack(pady=2)
+    ttk.Button(act_win, text="Add Action Type", bootstyle="success",
+               command=lambda: add_to_list(entry_act, listbox_act, ACTION_TYPES_FILE)).pack(pady=5)
+
+    listbox_act = tk.Listbox(act_win, height=15)
+    listbox_act.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+    ttk.Button(act_win, text="Delete Selected Action Type", bootstyle="danger",
+               command=lambda: delete_selected(listbox_act, ACTION_TYPES_FILE)).pack(pady=5)
+
+    load_list_to_listbox(ACTION_TYPES_FILE, listbox_act)
+
 
 def open_orders_window():
+    global ORDER_CATEGORIES, ORDER_ACTION_TYPES
+    ORDER_CATEGORIES = load_static_list(CATEGORIES_FILE) or [
+        "Maintenance", "Spare Parts", "Operation", "Software Update",
+        "Periodic Check", "Safety", "Electricity", "Mechanical", "Modification", "Other"
+    ]
+    ORDER_ACTION_TYPES = load_static_list(ACTION_TYPES_FILE) or [
+        "Wash", "Replace", "Repair", "Inspect", "Calibrate", "Upgrade", "Other"
+    ]
+
+    import json
+    from datetime import datetime
+    from openpyxl import Workbook
+    from tkinter import messagebox
+
     def reset_orders():
-        # 1. Fetch finished orders
-        c.execute("SELECT id, name, description, status FROM orders WHERE status='finished'")
+        # Fetch finished orders directly
+        c.execute("""
+            SELECT id, name, description, category, action_type, notes
+            FROM orders
+            WHERE status='finished'
+        """)
         finished_orders = c.fetchall()
 
         if not finished_orders:
             messagebox.showinfo("Reset Orders", "No finished orders to export.")
             return
 
-        # 2. Save to Excel
         wb = Workbook()
         ws = wb.active
         ws.title = "Finished Orders"
-        ws.append(["ID", "Name", "Description", "Status"])  # header row
+
+        # Header
+        ws.append([
+            "ID", "Name", "Description", "Category", "Action Type",
+            "Notes", "Leader", "Workers (with ratings)",
+            "Started At", "Ongoing At", "Finished At"
+        ])
 
         for order in finished_orders:
-            # order is a tuple: (id, name, description, status)
-            ws.append(order)  # appends all columns, including description
+            order_id, name, description, category_name, action_type, notes = order
 
-        # 3. Save file with timestamped name
+            # Get finish info
+            c.execute("SELECT leader, workers, ratings FROM order_finish_info WHERE order_id=?", (order_id,))
+            finish_info = c.fetchone()
+            leader = finish_info[0] if finish_info else ""
+            workers_list = finish_info[1].split(", ") if finish_info and finish_info[1] else []
+
+            # Ratings
+            ratings_dict = {}
+            if finish_info and finish_info[2]:
+                try:
+                    ratings_dict = json.loads(finish_info[2])
+                except json.JSONDecodeError:
+                    ratings_dict = {}
+
+            workers_with_ratings = []
+            for w in workers_list:
+                rating = ratings_dict.get(w, "-")
+                workers_with_ratings.append(f"{w} ({rating})")
+            workers_str = ", ".join(workers_with_ratings)
+
+            # History
+            c.execute("SELECT action, timestamp FROM order_history WHERE order_id=? ORDER BY id", (order_id,))
+            history_rows = c.fetchall()
+            started_at = ongoing_at = finished_at = ""
+            for action, ts in history_rows:
+                if "created" in action.lower():
+                    started_at = ts
+                elif "ongoing" in action.lower():
+                    ongoing_at = ts
+                elif "finished" in action.lower():
+                    finished_at = ts
+
+            # Append row to Excel
+            ws.append([
+                order_id, name, description, category_name, action_type,
+                notes or "", leader, workers_str,
+                started_at, ongoing_at, finished_at
+            ])
+
+        # Save file
         now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"finished_orders_{now_str}.xlsx"
         wb.save(filename)
 
-        # 4. Delete finished orders and related histories
+        # Delete exported orders
         c.execute("DELETE FROM orders WHERE status='finished'")
         c.execute("DELETE FROM order_history WHERE order_id NOT IN (SELECT id FROM orders)")
+        c.execute("DELETE FROM order_finish_info WHERE order_id NOT IN (SELECT id FROM orders)")
+        c.execute("DELETE FROM sqlite_sequence WHERE name='orders'")
+
         conn.commit()
 
         load_orders()
@@ -462,34 +650,39 @@ def open_orders_window():
         order_values = tree.item(selected_item)["values"]
         order_id = order_values[0]
 
-        # Fetch name and description from orders table
-        c.execute("SELECT name, description FROM orders WHERE id=?", (order_id,))
+        c.execute("SELECT name, description, notes, category, action_type FROM orders WHERE id=?", (order_id,))
         order = c.fetchone()
         if not order:
             messagebox.showerror("Error", "Order not found.")
             return
 
-        name, description = order
+        name, description, notes, category, action_type = order
 
-        # Fetch order history records
         c.execute("SELECT action, timestamp FROM order_history WHERE order_id=? ORDER BY id", (order_id,))
         history = c.fetchall()
 
-        # Create a new window to show details
         detail_win = Toplevel(orders_win)
         detail_win.title(f"Order #{order_id} Details")
-        detail_win.geometry("500x400")
+        detail_win.geometry("900x650")
+        detail_win.configure(bg=style.lookup("TFrame", "background") or "white")
 
         ttk.Label(detail_win, text=f"Name: {name}", font=("Arial", 12, "bold")).pack(anchor="w", padx=10, pady=5)
-        ttk.Label(detail_win, text="Description:", font=("Arial", 11, "underline")).pack(anchor="w", padx=10)
+        ttk.Label(detail_win, text=f"Category: {category}", font=("Arial", 11)).pack(anchor="w", padx=10)
+        ttk.Label(detail_win, text=f"Action Type: {action_type}", font=("Arial", 11)).pack(anchor="w", padx=10)
 
+        ttk.Label(detail_win, text="Description:", font=("Arial", 11, "underline")).pack(anchor="w", padx=10)
         desc_box = tk.Text(detail_win, height=4, wrap="word")
         desc_box.pack(fill="x", padx=10)
         desc_box.insert("1.0", description)
         desc_box.config(state="disabled")
 
-        ttk.Label(detail_win, text="Order History:", font=("Arial", 11, "underline")).pack(anchor="w", padx=10, pady=(10, 0))
+        ttk.Label(detail_win, text="Notes:", font=("Arial", 11, "underline")).pack(anchor="w", padx=10, pady=(10, 0))
+        notes_box = tk.Text(detail_win, height=3, wrap="word")
+        notes_box.pack(fill="x", padx=10)
+        notes_box.insert("1.0", notes)
+        notes_box.config(state="disabled")
 
+        ttk.Label(detail_win, text="Order History:", font=("Arial", 11, "underline")).pack(anchor="w", padx=10, pady=(10, 0))
         history_box = tk.Text(detail_win, height=10, wrap="word")
         history_box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
@@ -501,10 +694,10 @@ def open_orders_window():
 
         history_box.config(state="disabled")
 
-    orders_win = Toplevel(app)
+    orders_win = Toplevel()
     orders_win.title("Work Orders")
-    orders_win.geometry("700x450")
-    orders_win.configure(bg=style.colors.bg)
+    orders_win.geometry("900x600")
+    orders_win.configure(bg=style.lookup("TFrame", "background") or "white")
 
     main_frame = ttk.Frame(orders_win, padding=10)
     main_frame.pack(fill=tk.BOTH, expand=True)
@@ -513,7 +706,6 @@ def open_orders_window():
     filter_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
 
     ttk.Label(filter_frame, text="Filter by Category:").pack(side=tk.LEFT)
-
     filter_var = tk.StringVar()
     combo_filter = ttk.Combobox(filter_frame, textvariable=filter_var, values=["All"] + ORDER_CATEGORIES, state="readonly")
     combo_filter.set("All")
@@ -524,123 +716,132 @@ def open_orders_window():
 
     combo_filter.bind("<<ComboboxSelected>>", on_filter_change)
 
-    columns = ("id", "name", "description", "status", "history")
+    columns = ("id", "name", "description", "notes", "category", "action_type", "status", "history")
 
     tree = ttk.Treeview(main_frame, columns=columns, show="headings")
     tree.heading("id", text="ID")
     tree.heading("name", text="Name")
     tree.heading("description", text="Description")
+    tree.heading("notes", text="Notes")
+    tree.heading("category", text="Category")
+    tree.heading("action_type", text="Action Type")
     tree.heading("status", text="Status")
-    tree.heading("history", text="History")
-    tree.column("id", width=50, anchor=tk.CENTER)
-    tree.column("history", width=100, anchor=tk.CENTER)
+    tree.heading("history", text="Last History")
 
+    tree.column("id", width=50, anchor=tk.CENTER)
     tree.column("name", width=150)
     tree.column("description", width=250)
+    tree.column("notes", width=150)
+    tree.column("category", width=100)
+    tree.column("action_type", width=100)
     tree.column("status", width=100, anchor=tk.CENTER)
+    tree.column("history", width=180)
     tree.pack(fill=tk.BOTH, expand=True, pady=10)
     tree.bind("<Double-1>", on_order_double_click)
 
-    # Coloring status
-    def tag_status(status):
-        return "finished" if status == "finished" else "ongoing"
-
-    tree.tag_configure("ongoing", background="#fff8dc")   # yellowish
-    tree.tag_configure("finished", background="#d4edda")  # greenish
+    tree.tag_configure("waiting", background="#cce5ff", foreground="#004085")
+    tree.tag_configure("ongoing", background="#fff8dc", foreground="#856404")
+    tree.tag_configure("finished", background="#d4edda", foreground="#155724")
 
     def load_orders():
         for row in tree.get_children():
             tree.delete(row)
 
-        tree["columns"] = ("id", "name", "description", "status")
-        tree.heading("id", text="ID")
-        tree.heading("name", text="Name")
-        tree.heading("description", text="Description + Last Update")
-        tree.heading("status", text="Status")
-
-        tree.column("id", width=50, anchor=tk.CENTER)
-        tree.column("name", width=150)
-        tree.column("description", width=300)
-        tree.column("status", width=100, anchor=tk.CENTER)
-
         selected_category = filter_var.get()
 
-        # Load orders with ongoing first, then finished
-        c.execute("SELECT id, name, description, status FROM orders ORDER BY CASE status WHEN 'ongoing' THEN 0 ELSE 1 END, id DESC")
+        c.execute("""
+            SELECT id, name, description, notes, category, action_type, status FROM orders
+            ORDER BY 
+                CASE status
+                    WHEN 'waiting' THEN 0
+                    WHEN 'ongoing' THEN 1
+                    WHEN 'finished' THEN 2
+                    ELSE 3
+                END,
+                id DESC
+        """)
         orders = c.fetchall()
 
         for order in orders:
-            order_id, name, desc, status = order
+            order_id, name, desc, notes, category, action_type, status = order
 
-            # Fetch last history record
             c.execute(
                 "SELECT action, timestamp FROM order_history WHERE order_id = ? ORDER BY id DESC LIMIT 1",
                 (order_id,))
             hist = c.fetchone()
 
-            if hist:
-                action, timestamp = hist
-                desc_with_history = f"{desc}\n\nLast: {action} @ {timestamp}"
-            else:
-                action = ""
-                timestamp = ""
-                desc_with_history = desc
+            last_hist = f"{hist[0]} @ {hist[1]}" if hist else ""
 
-            # Filter by category if not "All"
-            if selected_category != "All":
-                # Since category is stored in history action like "Order Created (Maintenance)"
-                if f"({selected_category})" not in action:
-                    continue
+            if selected_category != "All" and category != selected_category:
+                continue
 
-            tag = "green" if status == "finished" else "yellow" if status == "ongoing" else "gray"
+            tag = status.lower()
+            if tag not in ["waiting", "ongoing", "finished"]:
+                tag = "ongoing"
 
-            tree.insert("", tk.END, values=(order_id, name, desc_with_history, status.capitalize()), tags=(tag,))
-
-        tree.tag_configure("green", foreground="#198754")
-        tree.tag_configure("yellow", foreground="#d39e00")
-        tree.tag_configure("gray", foreground="#6c757d")
-
-    load_orders()
-
+            tree.insert("", tk.END, values=(
+                order_id, name, desc, notes, category, action_type, status.capitalize(), last_hist), tags=(tag,))
 
     def add_order():
+        # تحميل التصنيفات والإجراءات من الملفات
+        categories = load_static_list(CATEGORIES_FILE) or []
+        actions = load_static_list(ACTION_TYPES_FILE) or []
+
         def save_new():
             n = entry_name.get().strip()
             d = text_desc.get("1.0", tk.END).strip()
             cat = combo_category.get().strip()
+            action_type = combo_action_type.get().strip()
+            notes = text_notes.get("1.0", tk.END).strip()
 
-            if not n or not cat:
-                messagebox.showerror("Error", "Please fill all fields and choose a category.")
+            if not n or not cat or cat == "Choose Category" or not action_type or action_type == "Choose Action Type":
+                messagebox.showerror("Error", "Please fill all fields and choose category and action type.")
                 return
 
-            # حفظ فقط الاسم والوصف والحالة (بدون تخزين التصنيف)
-            c.execute("INSERT INTO orders (name, description, status) VALUES (?, ?, ?)", (n, d, "ongoing"))
+            # حفظ الطلب باستخدام اسم التصنيف مباشرة
+            c.execute(
+                "INSERT INTO orders (name, description, status, category, action_type, notes) VALUES (?, ?, ?, ?, ?, ?)",
+                (n, d, "waiting", cat, action_type, notes)
+            )
+
+            # إضافة السجل الزمني
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             c.execute("SELECT last_insert_rowid()")
             order_id = c.fetchone()[0]
-
             c.execute("INSERT INTO order_history (order_id, action, timestamp) VALUES (?, ?, ?)",
-                      (order_id, f"Order Created ({cat})", now))
+                      (order_id, f"", now))
 
             conn.commit()
             load_orders()
             popup.destroy()
 
+        # واجهة الإدخال
         popup = Toplevel(orders_win)
         popup.title("Add New Order")
+        popup.geometry("400x450")
+        popup.configure(bg=style.lookup("TFrame", "background") or "white")
 
         ttk.Label(popup, text="Category:").pack(padx=10, pady=5, anchor="w")
-        combo_category = ttk.Combobox(popup, values=ORDER_CATEGORIES, state="readonly")
-        combo_category.set("اختر التصنيف")
+        combo_category = ttk.Combobox(popup, values=categories, state="readonly")
+        combo_category.set("Choose Category")
         combo_category.pack(padx=10, pady=5)
+
+        ttk.Label(popup, text="Action Type:").pack(padx=10, pady=5, anchor="w")
+        combo_action_type = ttk.Combobox(popup, values=actions, state="readonly")
+        combo_action_type.set("Choose Action Type")
+        combo_action_type.pack(padx=10, pady=5)
 
         ttk.Label(popup, text="Name:").pack(padx=10, pady=5, anchor="w")
         entry_name = ttk.Entry(popup, width=40)
         entry_name.pack(padx=10, pady=5)
 
         ttk.Label(popup, text="Description:").pack(padx=10, pady=5, anchor="w")
-        text_desc = tk.Text(popup, width=40, height=6)
+        text_desc = tk.Text(popup, width=40, height=4)
         text_desc.pack(padx=10, pady=5)
+
+        ttk.Label(popup, text="Notes:").pack(padx=10, pady=5, anchor="w")
+        text_notes = tk.Text(popup, width=40, height=3)
+        text_notes.pack(padx=10, pady=5)
 
         ttk.Button(popup, text="Save", command=save_new).pack(padx=10, pady=10)
 
@@ -651,34 +852,79 @@ def open_orders_window():
             return
         order_id = tree.item(selected[0])["values"][0]
 
-        c.execute("SELECT name, description FROM orders WHERE id=?", (order_id,))
+        c.execute("""
+            SELECT name, description, notes, category_id, action_type 
+            FROM orders WHERE id=?
+        """, (order_id,))
         order = c.fetchone()
         if not order:
             messagebox.showerror("Error", "Order not found.")
             return
 
+        name, description, notes, category_id, action_type = order
+
+        # Get category name from id
+        c.execute("SELECT name FROM categories WHERE id=?", (category_id,))
+        row = c.fetchone()
+        category_name = row[0] if row else "Unknown"
+
         def save_edit():
             new_name = entry_name.get().strip()
             new_desc = text_desc.get("1.0", tk.END).strip()
-            if not new_name or not new_desc:
-                messagebox.showerror("Error", "Please fill both Name and Description.")
+            new_notes = text_notes.get("1.0", tk.END).strip()
+            new_cat = combo_category.get().strip()
+            new_action_type = combo_action_type.get().strip()
+
+            if not new_name or not new_cat or new_cat == "Choose Category" or not new_action_type or new_action_type == "Choose Action Type":
+                messagebox.showerror("Error", "Please fill all fields and choose category and action type.")
                 return
-            c.execute("UPDATE orders SET name=?, description=? WHERE id=?", (new_name, new_desc, order_id))
+
+            # Get category_id for the selected category
+            c.execute("SELECT id FROM categories WHERE name=?", (new_cat,))
+            row = c.fetchone()
+            if not row:
+                messagebox.showerror("Error", "Selected category not found in database.")
+                return
+            new_category_id = row[0]
+
+            c.execute("""
+                UPDATE orders SET name=?, description=?, notes=?, category_id=?, action_type=?
+                WHERE id=?
+            """, (new_name, new_desc, new_notes, new_category_id, new_action_type, order_id))
+
             conn.commit()
             load_orders()
             popup.destroy()
 
         popup = Toplevel(orders_win)
         popup.title("Edit Order")
+        popup.geometry("900x750")
+        popup.configure(bg=style.lookup("TFrame", "background") or "white")
+
+        ttk.Label(popup, text="Category:").pack(padx=10, pady=5, anchor="w")
+        combo_category = ttk.Combobox(popup, values=ORDER_CATEGORIES, state="readonly")
+        combo_category.set(category_name)
+        combo_category.pack(padx=10, pady=5)
+
+        ttk.Label(popup, text="Action Type:").pack(padx=10, pady=5, anchor="w")
+        combo_action_type = ttk.Combobox(popup, values=ORDER_ACTION_TYPES, state="readonly")
+        combo_action_type.set(action_type)
+        combo_action_type.pack(padx=10, pady=5)
+
         ttk.Label(popup, text="Name:").pack(padx=10, pady=5, anchor="w")
         entry_name = ttk.Entry(popup, width=40)
         entry_name.pack(padx=10, pady=5)
-        entry_name.insert(0, order[0])
+        entry_name.insert(0, name)
 
         ttk.Label(popup, text="Description:").pack(padx=10, pady=5, anchor="w")
-        text_desc = tk.Text(popup, width=40, height=6)
+        text_desc = tk.Text(popup, width=40, height=4)
         text_desc.pack(padx=10, pady=5)
-        text_desc.insert("1.0", order[1])
+        text_desc.insert("1.0", description)
+
+        ttk.Label(popup, text="Notes:").pack(padx=10, pady=5, anchor="w")
+        text_notes = tk.Text(popup, width=40, height=3)
+        text_notes.pack(padx=10, pady=5)
+        text_notes.insert("1.0", notes)
 
         ttk.Button(popup, text="Save", command=save_edit).pack(padx=10, pady=10)
 
@@ -691,33 +937,251 @@ def open_orders_window():
         confirm = messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this order?")
         if confirm:
             c.execute("DELETE FROM orders WHERE id=?", (order_id,))
+            c.execute("DELETE FROM order_finish_info WHERE order_id=?", (order_id,))
             conn.commit()
             load_orders()
 
     def finish_order():
+        global conn, c  # تأكد أن الاتصال متاح
         selected = tree.selection()
         if not selected:
             messagebox.showerror("Error", "No order selected.")
             return
-        order_id = tree.item(selected[0])["values"][0]
-        c.execute("UPDATE orders SET status='finished' WHERE id=?", (order_id,))
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("INSERT INTO order_history (order_id, action, timestamp) VALUES (?, ?, ?)",
-                  (order_id, "Order Finished", now))
-        conn.commit()
-        load_orders()
 
-    # الأزرار
+        order_id = tree.item(selected[0])["values"][0]
+
+        c.execute("SELECT status FROM orders WHERE id=?", (order_id,))
+        current_status_row = c.fetchone()
+        if not current_status_row:
+            messagebox.showerror("Error", "Order not found.")
+            return
+
+        current_status = current_status_row[0]
+
+        if current_status == "waiting":
+            new_status = "ongoing"
+            c.execute("UPDATE orders SET status=? WHERE id=?", (new_status, order_id))
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            c.execute("INSERT INTO order_history (order_id, action, timestamp) VALUES (?, ?, ?)",
+                      (order_id, "Order Started (ongoing)", now))
+            conn.commit()
+            load_orders()
+
+
+
+        elif current_status == "ongoing":
+
+            # تأكد أن جدول order_finish_info موجود
+
+            c.execute("""
+
+            CREATE TABLE IF NOT EXISTS order_finish_info (
+
+                order_id INTEGER PRIMARY KEY,
+
+                leader TEXT,
+
+                workers TEXT,
+
+                ratings TEXT
+
+            )
+
+            """)
+
+            conn.commit()
+
+            # نافذة إنهاء الطلب
+
+            finish_win = Toplevel(orders_win)
+
+            finish_win.title("Finish Order")
+
+            finish_win.geometry("800x600")
+
+            finish_win.configure(bg=style.lookup("TFrame", "background") or "white")
+
+            ttk.Label(finish_win, text="Select Leader:", font=("Segoe UI", 12)).pack(pady=10)
+
+            combo_leader = ttk.Combobox(finish_win, values=LEADERS, state="readonly")
+
+            combo_leader.pack(pady=5)
+
+            ttk.Label(finish_win, text="Select Workers and Rate:", font=("Segoe UI", 12)).pack(pady=10)
+
+            workers_vars = []
+
+            ratings_vars = []
+
+            workers_frame = ttk.Frame(finish_win)
+
+            workers_frame.pack(pady=5)
+
+            for worker in WORKERS:
+                row = ttk.Frame(workers_frame)
+
+                row.pack(anchor="w", pady=2)
+
+                var = tk.BooleanVar()
+
+                chk = ttk.Checkbutton(row, text=worker, variable=var)
+
+                chk.pack(side=tk.LEFT)
+
+                rating = ttk.Combobox(row, values=[1, 2, 3, 4, 5], width=3, state="readonly")
+
+                rating.set(5)
+
+                rating.pack(side=tk.LEFT, padx=10)
+
+                workers_vars.append((var, worker))
+
+                ratings_vars.append((worker, rating))
+
+            def save_finish():
+
+                leader = combo_leader.get()
+
+                selected_workers = [w for (v, w) in workers_vars if v.get()]
+
+                if not leader:
+                    messagebox.showerror("Error", "Please select a leader.")
+
+                    return
+
+                if not selected_workers:
+                    messagebox.showerror("Error", "Please select at least one worker.")
+
+                    return
+
+                # جمع التقييمات فقط للعمال المحددين
+
+                ratings = {}
+
+                for worker, rating_cb in ratings_vars:
+
+                    if worker in selected_workers:
+
+                        try:
+
+                            ratings[worker] = int(rating_cb.get())
+
+                        except ValueError:
+
+                            ratings[worker] = 5  # تقييم افتراضي
+
+                # تحديث الطلب
+
+                c.execute("UPDATE orders SET status='finished' WHERE id=?", (order_id,))
+
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                c.execute("INSERT INTO order_history (order_id, action, timestamp) VALUES (?, ?, ?)",
+
+                          (order_id, f"Order Finished by {leader}", now))
+
+                c.execute("""
+
+                    INSERT OR REPLACE INTO order_finish_info (order_id, leader, workers, ratings)
+
+                    VALUES (?, ?, ?, ?)
+
+                """, (order_id, leader, ", ".join(selected_workers), json.dumps(ratings)))
+
+                conn.commit()
+
+                load_orders()
+
+
+
+
+
+            ttk.Button(finish_win, text="Finish Order", command=save_finish).pack(pady=20)
+
+
+        elif current_status == "finished":
+            messagebox.showinfo("Info", "Order is already finished.").showinfo("Info", "Order is already finished.")
+
     btn_frame = ttk.Frame(main_frame)
     btn_frame.pack(fill=tk.X)
-    ttk.Button(btn_frame, text="Reset Orders", command=reset_orders).pack(side=tk.RIGHT, padx=5, pady=5)
 
-    ttk.Button(btn_frame, text="Add Order", command=add_order, bootstyle="success").pack(side=tk.LEFT, padx=5, pady=5)
-    ttk.Button(btn_frame, text="Edit Selected", command=edit_order, bootstyle="warning").pack(side=tk.LEFT, padx=5, pady=5)
-    ttk.Button(btn_frame, text="Delete Selected", command=delete_order, bootstyle="danger").pack(side=tk.LEFT, padx=5, pady=5)
-    ttk.Button(btn_frame, text="Mark as Finished", command=finish_order, bootstyle="info").pack(side=tk.LEFT, padx=5, pady=5)
+    ttk.Button(btn_frame, text="Manage People", command=manage_people_window).pack(side=tk.RIGHT, padx=5, pady=5)
+    ttk.Button(btn_frame, text="Manage Categories", command=manage_categories_window).pack(side=tk.RIGHT, padx=5,
+                                                                                           pady=5)
+    ttk.Button(btn_frame, text="Manage Actions", command=manage_action_types_window).pack(side=tk.RIGHT, padx=5, pady=5)
+    ttk.Button(btn_frame, text="Reset Orders", command=reset_orders).pack(side=tk.RIGHT, padx=5, pady=5)
+    ttk.Button(btn_frame, text="Add Order", command=add_order, style="success.TButton").pack(side=tk.LEFT, padx=5, pady=5)
+    ttk.Button(btn_frame, text="Edit Selected", command=edit_order, style="warning.TButton").pack(side=tk.LEFT, padx=5, pady=5)
+    ttk.Button(btn_frame, text="Delete Selected", command=delete_order, style="danger.TButton").pack(side=tk.LEFT, padx=5, pady=5)
+    ttk.Button(btn_frame, text="Mark as Finished", command=finish_order, style="info.TButton").pack(side=tk.LEFT, padx=5, pady=5)
 
     load_orders()
+
+def manage_people_window():
+    people_win = tk.Toplevel()
+    people_win.title("mangement")
+    people_win.geometry("700x600")
+    people_win.configure(bg=style.colors.bg)
+
+    # --- الإدخالات ---
+    ttk.Label(people_win, text="adding new leader:").pack(pady=(10, 2))
+    leader_entry = ttk.Entry(people_win)
+    leader_entry.pack(pady=2)
+
+    ttk.Button(people_win, text="add leader", bootstyle="success", command=lambda: add_to_list(leader_entry, listbox_leaders, "leaders.txt")).pack(pady=5)
+
+    ttk.Label(people_win, text="adding new worker:").pack(pady=(20, 2))
+    worker_entry = ttk.Entry(people_win)
+    worker_entry.pack(pady=2)
+
+    ttk.Button(people_win, text="add worker", bootstyle="success", command=lambda: add_to_list(worker_entry, listbox_workers, "workers.txt")).pack(pady=5)
+
+    # --- عرض القوائم ---
+    frame_lists = ttk.Frame(people_win)
+    frame_lists.pack(fill="both", expand=True, padx=10, pady=10)
+
+    listbox_leaders = tk.Listbox(frame_lists, height=8)
+    listbox_leaders.grid(row=0, column=0, sticky="nsew", padx=5)
+    ttk.Button(frame_lists, text="delete selected leader", bootstyle="danger", command=lambda: delete_selected(listbox_leaders, "leaders.txt")).grid(row=1, column=0, pady=5)
+
+    listbox_workers = tk.Listbox(frame_lists, height=8)
+    listbox_workers.grid(row=0, column=1, sticky="nsew", padx=5)
+    ttk.Button(frame_lists, text="delete selected worker", bootstyle="danger", command=lambda: delete_selected(listbox_workers, "workers.txt")).grid(row=1, column=1, pady=5)
+
+    frame_lists.columnconfigure(0, weight=1)
+    frame_lists.columnconfigure(1, weight=1)
+
+    # تحميل البيانات الحالية
+    load_list_to_listbox("leaders.txt", listbox_leaders)
+    load_list_to_listbox("workers.txt", listbox_workers)
+
+# --- توابع المساعدة ---
+def add_to_list(entry_widget, listbox, filename):
+    name = entry_widget.get().strip()
+    if name:
+        listbox.insert(tk.END, name)
+        save_listbox_to_file(listbox, filename)
+        entry_widget.delete(0, tk.END)
+
+def delete_selected(listbox, filename):
+    selected = listbox.curselection()
+    if selected:
+        listbox.delete(selected[0])
+        save_listbox_to_file(listbox, filename)
+
+def save_listbox_to_file(listbox, filename):
+    items = listbox.get(0, tk.END)
+    with open(filename, "w", encoding="utf-8") as f:
+        for item in items:
+            f.write(item + "\n")
+
+def load_list_to_listbox(filename, listbox):
+    listbox.delete(0, tk.END)
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
+            for line in f:
+                listbox.insert(tk.END, line.strip())
+
 
 
 def add_category():
