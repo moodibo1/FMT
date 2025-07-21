@@ -809,7 +809,7 @@ def open_orders_window():
             c.execute("SELECT last_insert_rowid()")
             order_id = c.fetchone()[0]
             c.execute("INSERT INTO order_history (order_id, action, timestamp) VALUES (?, ?, ?)",
-                      (order_id, f"", now))
+                      (order_id, "Order Created", now))
 
             conn.commit()
             load_orders()
