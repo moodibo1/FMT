@@ -852,8 +852,9 @@ def open_orders_window():
             return
         order_id = tree.item(selected[0])["values"][0]
 
+        # الآن نقرأ الحقول كما هي من الجدول
         c.execute("""
-            SELECT name, description, notes, category_id, action_type 
+            SELECT name, description, notes, category, action_type 
             FROM orders WHERE id=?
         """, (order_id,))
         order = c.fetchone()
@@ -861,12 +862,7 @@ def open_orders_window():
             messagebox.showerror("Error", "Order not found.")
             return
 
-        name, description, notes, category_id, action_type = order
-
-        # Get category name from id
-        c.execute("SELECT name FROM categories WHERE id=?", (category_id,))
-        row = c.fetchone()
-        category_name = row[0] if row else "Unknown"
+        name, description, notes, category_name, action_type = order
 
         def save_edit():
             new_name = entry_name.get().strip()
@@ -879,18 +875,11 @@ def open_orders_window():
                 messagebox.showerror("Error", "Please fill all fields and choose category and action type.")
                 return
 
-            # Get category_id for the selected category
-            c.execute("SELECT id FROM categories WHERE name=?", (new_cat,))
-            row = c.fetchone()
-            if not row:
-                messagebox.showerror("Error", "Selected category not found in database.")
-                return
-            new_category_id = row[0]
-
+            # تحديث مباشر دون الحاجة للبحث عن ID
             c.execute("""
-                UPDATE orders SET name=?, description=?, notes=?, category_id=?, action_type=?
+                UPDATE orders SET name=?, description=?, notes=?, category=?, action_type=?
                 WHERE id=?
-            """, (new_name, new_desc, new_notes, new_category_id, new_action_type, order_id))
+            """, (new_name, new_desc, new_notes, new_cat, new_action_type, order_id))
 
             conn.commit()
             load_orders()
@@ -1338,7 +1327,7 @@ def update_machine():
     interval = entry_interval.get().strip()
     image_path = image_path_var.get().strip()
 
-    if not all([name, location, category_name, purchase, last, interval]):
+    if not all([name, location, category_name,  last, interval]):
         messagebox.showerror("Missing Info", "Please fill all fields.")
         return
 
